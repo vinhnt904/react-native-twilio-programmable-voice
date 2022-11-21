@@ -19,6 +19,7 @@ import android.os.IBinder;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.style.ForegroundColorSpan;
+import android.widget.RemoteViews;
 import android.util.Log;
 
 import androidx.annotation.ColorRes;
@@ -52,7 +53,7 @@ public class IncomingCallNotificationService extends Service {
                 break;
 
             case Constants.ACTION_ACCEPT:
-                accept(callInvite, notificationId);
+                endForeground();
                 break;
 
             case Constants.ACTION_REJECT:
@@ -65,11 +66,11 @@ public class IncomingCallNotificationService extends Service {
 
             case Constants.ACTION_JS_ANSWER:
                 endForeground();
-                break;   
+                break;
 
             case Constants.ACTION_JS_REJECT:
                 endForeground();
-                break;    
+                break;
 
             default:
                 break;
@@ -80,52 +81,6 @@ public class IncomingCallNotificationService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
-    }
-
-    private Notification createNotification(CallInvite callInvite, int notificationId, int channelImportance) {
-        Context context = getApplicationContext();
-
-        Intent intent = new Intent(this, getMainActivityClass(context));
-        intent.setAction(Constants.ACTION_INCOMING_CALL_NOTIFICATION);
-        intent.putExtra(Constants.INCOMING_CALL_NOTIFICATION_ID, notificationId);
-        intent.putExtra(Constants.INCOMING_CALL_INVITE, callInvite);
-        intent.putExtra(Constants.CALL_SID, callInvite.getCallSid());
-        intent.putExtra(Constants.CALL_FROM, callInvite.getFrom());
-        intent.putExtra(Constants.CALL_TO, callInvite.getTo());
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-        PendingIntent pendingIntent =
-                PendingIntent.getActivity(this, notificationId, intent, PendingIntent.FLAG_UPDATE_CURRENT);
-
-        /*
-         * Pass the notification id and call sid to use as an identifier to cancel the
-         * notification later
-         */
-        Bundle extras = new Bundle();
-        extras.putString(Constants.CALL_SID_KEY, callInvite.getCallSid());
-
-        String contentText = callInvite.getFrom() + " " + getString(R.string.call_incoming_content);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            return buildNotification(contentText,
-                    pendingIntent,
-                    extras,
-                    callInvite,
-                    notificationId,
-                    createChannel(channelImportance));
-        } else {
-            // noinspection deprecation
-            return new NotificationCompat.Builder(this)
-                    .setSmallIcon(R.drawable.ic_call_white_24dp)
-                    .setContentTitle(getString(R.string.call_incoming_title))
-                    .setContentText(contentText)
-                    .setAutoCancel(true)
-                    .setExtras(extras)
-                    .setContentIntent(pendingIntent)
-                    .setGroup("test_app_notification")
-                    .setColor(Color.rgb(214, 10, 37))
-                    .build();
-        }
     }
 
     private Spannable getActionText(Context context, @StringRes int stringRes, @ColorRes int colorRes) {
@@ -141,62 +96,76 @@ public class IncomingCallNotificationService extends Service {
         return spannable;
     }
 
-    private PendingIntent createActionPendingIntent(Context context, Intent intent) {
-        return PendingIntent.getService(
-                context,
-                0,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT
-        );
+    // type allow 'activity' | 'service' | maybe broadcast but current not handle
+    private PendingIntent createActionPendingIntent(String type, Context context, Intent intent, int flags) {
+        switch(type){
+            case "activity":
+                return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE | flags);
+            case "service":
+                return PendingIntent.getService(context, 0, intent, PendingIntent.FLAG_IMMUTABLE | flags);
+            default:
+                return PendingIntent.getService(context, 0, new Intent(), PendingIntent.FLAG_IMMUTABLE | flags);
+        }
     }
 
     /**
      * Build a notification.
-     *
-     * @param text          the text of the notification
-     * @param pendingIntent the body, pending intent for the notification
-     * @param extras        extras passed with the notification
+     * @param channelId
+     * @param notificationId
+     * @param callInvite
      * @return the builder
      */
     @TargetApi(Build.VERSION_CODES.O)
-    private Notification buildNotification(String text,
-                                           PendingIntent pendingIntent,
-                                           Bundle extras,
-                                           final CallInvite callInvite,
-                                           int notificationId,
-                                           String channelId) {
+    private Notification buildNotification(String channelId, int notificationId,final CallInvite callInvite) {
         Context context = getApplicationContext();
+
+        Bundle extras = new Bundle();
+        extras.putString(Constants.CALL_SID_KEY, callInvite.getCallSid());
+        String contentTitle = getString(R.string.call_incoming_title);
+        String contentText = callInvite.getFrom();
 
         Intent rejectIntent = new Intent(context, IncomingCallNotificationService.class);
         rejectIntent.setAction(Constants.ACTION_REJECT);
         rejectIntent.putExtra(Constants.INCOMING_CALL_INVITE, callInvite);
         rejectIntent.putExtra(Constants.INCOMING_CALL_NOTIFICATION_ID, notificationId);
-        NotificationCompat.Action rejectAction = new NotificationCompat.Action.Builder(
-                android.R.drawable.ic_menu_delete,
-                getActionText(context, R.string.reject, R.color.red),
-                createActionPendingIntent(context, rejectIntent)
-        ).build();
+        PendingIntent rejectPendingIntent = createActionPendingIntent("service", context, rejectIntent, PendingIntent.FLAG_CANCEL_CURRENT);
 
-        Intent acceptIntent = new Intent(context, IncomingCallNotificationService.class);
+        Intent acceptIntent = new Intent(context, IncomingCallActivity.class);
         acceptIntent.setAction(Constants.ACTION_ACCEPT);
         acceptIntent.putExtra(Constants.INCOMING_CALL_INVITE, callInvite);
         acceptIntent.putExtra(Constants.INCOMING_CALL_NOTIFICATION_ID, notificationId);
-        NotificationCompat.Action answerAction = new NotificationCompat.Action.Builder(
-                android.R.drawable.ic_menu_call,
-                getActionText(context, R.string.accept, R.color.green),
-                createActionPendingIntent(context, acceptIntent)
-        ).build();
+        PendingIntent acceptPendingIntent = createActionPendingIntent("activity", context, acceptIntent, PendingIntent.FLAG_CANCEL_CURRENT);
+
+        Intent fullScreenIntent = new Intent(context, IncomingCallActivity.class);
+        fullScreenIntent.setAction(Constants.ACTION_INCOMING_CALL_NOTIFICATION);
+        fullScreenIntent.putExtra(Constants.INCOMING_CALL_NOTIFICATION_ID, notificationId);
+        fullScreenIntent.putExtra(Constants.INCOMING_CALL_INVITE, callInvite);
+        fullScreenIntent.putExtra(Constants.CALL_SID, callInvite.getCallSid());
+        fullScreenIntent.putExtra(Constants.CALL_FROM, callInvite.getFrom());
+        fullScreenIntent.putExtra(Constants.CALL_TO, callInvite.getTo());
+        fullScreenIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        fullScreenIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        PendingIntent fullScreenPendingIntent = createActionPendingIntent("activity", context, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+
+        RemoteViews notificationLayout =  new RemoteViews(context.getPackageName(), R.layout.notifition_custom);
+        notificationLayout.setTextViewText(R.id.title, contentTitle);
+        notificationLayout.setTextViewText(R.id.message, contentText);
+        notificationLayout.setOnClickPendingIntent(R.id.btnAccept, acceptPendingIntent);
+        notificationLayout.setOnClickPendingIntent(R.id.btnReject, rejectPendingIntent);
 
         NotificationCompat.Builder builder =
                 new NotificationCompat.Builder(context, channelId)
                         .setSmallIcon(R.drawable.ic_call_white_24dp)
-                        .setContentTitle(getString(R.string.call_incoming_title))
-                        .setContentText(text)
+                        .setContentTitle(contentTitle)
+                        .setContentText(contentText)
                         .setExtras(extras)
                         .setAutoCancel(true)
-                        .addAction(rejectAction)
-                        .addAction(answerAction)
-                        .setFullScreenIntent(pendingIntent, true)
+                        // .addAction(rejectAction)
+                        // .addAction(answerAction)
+                        .setFullScreenIntent(fullScreenPendingIntent, true)
+                        .setCustomContentView(notificationLayout)
+                        .setCustomBigContentView(notificationLayout)
+                        .setCustomHeadsUpContentView(notificationLayout)
                         .setPriority(NotificationCompat.PRIORITY_HIGH)
                         .setCategory(Notification.CATEGORY_CALL)
                         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -239,20 +208,6 @@ public class IncomingCallNotificationService extends Service {
         return channelId;
     }
 
-    private void accept(CallInvite callInvite, int notificationId) {
-        endForeground();
-        Intent activeCallIntent = new Intent(this, getMainActivityClass(this));
-        activeCallIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        activeCallIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        activeCallIntent.putExtra(Constants.INCOMING_CALL_INVITE, callInvite);
-        activeCallIntent.putExtra(Constants.INCOMING_CALL_NOTIFICATION_ID, notificationId);
-        activeCallIntent.putExtra(Constants.CALL_SID, callInvite.getCallSid());
-        activeCallIntent.putExtra(Constants.CALL_FROM, callInvite.getFrom());
-        activeCallIntent.putExtra(Constants.CALL_TO, callInvite.getTo());
-        activeCallIntent.setAction(Constants.ACTION_ACCEPT);
-        this.startActivity(activeCallIntent);
-    }
-
     private void reject(CallInvite callInvite, int notificationId) {
         SoundPoolManager.getInstance(this).stopRinging();
         endForeground();
@@ -288,7 +243,9 @@ public class IncomingCallNotificationService extends Service {
             }
             importance = NotificationManager.IMPORTANCE_HIGH;
         }
-        this.startForeground(notificationId, createNotification(callInvite, notificationId, importance));
+        String channelId = createChannel(importance);
+        Notification notice = buildNotification(channelId, notificationId, callInvite);
+        this.startForeground(notificationId, notice);
     }
 
     /*

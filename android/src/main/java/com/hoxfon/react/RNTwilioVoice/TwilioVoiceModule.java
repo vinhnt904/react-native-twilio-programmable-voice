@@ -10,7 +10,6 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.media.AudioManager;
-import android.os.Build;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
@@ -118,7 +117,7 @@ public class TwilioVoiceModule extends ReactContextBaseJavaModule implements Act
     public TwilioVoiceModule(ReactApplicationContext reactContext,
                              boolean shouldAskForMicPermission) {
         super(reactContext);
-
+        Voice.setEdge("tokyo");
         if (BuildConfig.DEBUG) {
             Voice.setLogLevel(LogLevel.DEBUG);
         } else {
@@ -290,7 +289,10 @@ public class TwilioVoiceModule extends ReactContextBaseJavaModule implements Act
                 if (BuildConfig.DEBUG) {
                     Log.d(TAG, "Call.Listener().onConnected(). Call state: " + call.getState());
                 }
+                startAudioSwitch();
+                selectAudioDevice("auto");
                 audioSwitch.activate();
+                
                 proximityManager.startProximitySensor();
                 headsetManager.startWiredHeadsetEvent(getReactApplicationContext());
 
@@ -687,8 +689,12 @@ public class TwilioVoiceModule extends ReactContextBaseJavaModule implements Act
 
     @ReactMethod  //
     public void unregister(Promise promise) {
-        unregisterForCallInvites();
-        promise.resolve(true);
+        if(accessToken != null){
+            unregisterForCallInvites();
+            promise.resolve(true);
+        } else {
+            promise.resolve(false);
+        }
     }
 
     private void unregisterForCallInvites() {
@@ -717,13 +723,16 @@ public class TwilioVoiceModule extends ReactContextBaseJavaModule implements Act
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "acceptFromIntent()");
         }
+        SoundPoolManager.getInstance(getReactApplicationContext()).stopRinging();
         activeCallInvite = intent.getParcelableExtra(Constants.INCOMING_CALL_INVITE);
         if (activeCallInvite == null) {
             eventManager.sendEvent(EVENT_CALL_INVITE_CANCELLED, null);
             return;
         }
 
-        SoundPoolManager.getInstance(getReactApplicationContext()).stopRinging();
+        Intent acceptIntent = new Intent(getReactApplicationContext(), IncomingCallNotificationService.class);
+        acceptIntent.setAction(Constants.ACTION_ACCEPT);
+        getReactApplicationContext().startService(acceptIntent);
 
         AcceptOptions acceptOptions = new AcceptOptions.Builder()
                 .enableDscp(true)
@@ -838,6 +847,32 @@ public class TwilioVoiceModule extends ReactContextBaseJavaModule implements Act
     }
 
     @ReactMethod
+    public void showIncomingCallActivity(ReadableMap params) {
+        Intent intent = new Intent(getReactApplicationContext(), IncomingCallActivity.class);
+
+        Bundle bundle = Arguments.toBundle(params);
+        if(bundle != null) intent.putExtras(bundle);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getReactApplicationContext().startActivity(intent);
+    }
+    @ReactMethod
+    public void closeIncomingCallActivity() {
+        if(IncomingCallActivity.currentActivity != null){
+            IncomingCallActivity.currentActivity.finish();
+        }
+    }
+
+    @ReactMethod
+    public void addListener(String eventName) {
+        // Keep: Required for RN built in Event Emitter Calls.
+    }
+
+    @ReactMethod
+    public void removeListeners(Integer count) {
+        // Keep: Required for RN built in Event Emitter Calls.
+    }
+
+    @ReactMethod
     public void disconnect() {
         if (activeCall != null) {
             activeCall.disconnect();
@@ -924,10 +959,8 @@ public class TwilioVoiceModule extends ReactContextBaseJavaModule implements Act
     @ReactMethod
     public void selectAudioDevice(String name) {
         AudioDevice selected = availableAudioDevices.get(name);
-        if (selected == null) {
-            return;
-        }
         audioSwitch.selectDevice(selected);
+        // selected = null is auto select audio device device
     }
 
     private void startAudioSwitch() {

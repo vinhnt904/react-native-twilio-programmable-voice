@@ -1,4 +1,29 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.hoxfon.react.RNTwilioVoice">
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD"/>
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <application>
+
+        <activity
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:showOnLockScreen="true"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait"
+            android:name=".IncomingCallActivity"
+            />
+
+        <service
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall"
+            android:name=".IncomingCallNotificationService">
+            <intent-filter>
+                <action android:name="com.hoxfon.react.RNTwilioVoice.ACTION_ACCEPT" />
+                <action android:name="com.hoxfon.react.RNTwilioVoice.ACTION_REJECT" />
+            </intent-filter>
+        </service>
+
+    </application>
 </manifest>
