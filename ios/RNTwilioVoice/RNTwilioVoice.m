@@ -23,15 +23,18 @@ NSString * const kCallerNameCustomParameter = @"CallerName";
 @property (nonatomic, strong) TVOCall *activeCall;
 @property (nonatomic, strong) CXProvider *callKitProvider;
 @property (nonatomic, strong) CXCallController *callKitCallController;
+@property (nonatomic, assign) NSString *rejectCallReason;
 @property (nonatomic, assign) BOOL userInitiatedDisconnect;
+@property (nonatomic, assign) BOOL cancelledCallInviteReceived;
 
 @end
 
 @implementation RNTwilioVoice {
   NSMutableDictionary *_settings;
   NSMutableDictionary *_callParams;
-  NSString *_tokenUrl;
   NSString *_token;
+  BOOL _hasListeners;
+  NSMutableArray *_delayedEvents;
 }
 
 NSString * const StateConnecting = @"CONNECTING";
@@ -61,21 +64,50 @@ RCT_EXPORT_MODULE()
   [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-RCT_EXPORT_METHOD(initWithAccessToken:(NSString *)token) {
-    _token = token;
-    [[NSUserDefaults standardUserDefaults] setObject:_token forKey:twilioAccessToken];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleAppTerminateNotification) name:UIApplicationWillTerminateNotification object:nil];
-    [self initPushRegistry];
-    NSLog(@"RNTwilio init with access token successfully");
+- (void)sendEventWithNameWrapper:(NSString *)eventName body:(id)body {
+    NSLog(@"[RNTwilio] sendEventWithNameWrapper: %@, hasListeners : %@", eventName, _hasListeners ? @"YES": @"NO");
+    NSMutableDictionary *data = [self makeupEventParamAndSetToCache:eventName body:body];
+    if (_hasListeners) [self sendEventWithName:eventName body:data];
 }
 
 - (void) initTwilioVoice:(NSString *)appName {
+    _delayedEvents = [NSMutableArray array];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleAppTerminateNotification) name:UIApplicationWillTerminateNotification object:nil];
     [self initPushRegistry];
-    [self registerWithAccessToken:nil]; //register with token from cache
     [self configCallKit:@{@"appName": appName}];
     [TwilioVoiceSDK setEdge:@"tokyo"];
-    NSLog(@"RNTwilio initTwilioVoice in background");
+    NSLog(@"[RNTwilio] initTwilioVoice in background");
+}
+
+- (NSMutableDictionary *) makeupEventParamAndSetToCache:(NSString *)eventName body:(id)body {
+    NSMutableDictionary *data = [[NSMutableDictionary alloc] initWithDictionary:body];
+    NSTimeInterval timeStamp = [[NSDate date] timeIntervalSince1970] * 1000;
+    [data setValue:[NSString stringWithFormat:@"%0.f", timeStamp] forKey:@"timeStamp"];
+    AVAuthorizationStatus microphonePermission = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    [data setObject:(microphonePermission == AVAuthorizationStatusAuthorized ? @"is_authorized" : @"NOT_authorized" ) forKey:@"microphone_permission"];
+    
+    NSString *portType = @"Default";
+    AVAudioSessionRouteDescription* route = [[AVAudioSession sharedInstance] currentRoute];
+    for (AVAudioSessionPortDescription* desc in [route outputs]) {
+        portType = [desc portType];
+        break;
+    }
+    [data setObject:portType forKey:@"headphone_connection"];
+    NSDictionary *dictionary = [NSDictionary dictionaryWithObjectsAndKeys:eventName,@"event", data,@"data", nil];
+    [_delayedEvents addObject:dictionary];
+    return data;
+}
+
+RCT_EXPORT_METHOD(getCacheEvents:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject){
+  resolve(_delayedEvents);
+  _delayedEvents = [NSMutableArray array];
+}
+
+RCT_EXPORT_METHOD(initWithAccessToken:(NSString *)token) {
+  _token = token;
+  _hasListeners = YES;
+  [[NSUserDefaults standardUserDefaults] setObject:_token forKey:twilioAccessToken];
+  [self registerWithAccessToken:nil];
 }
 
 RCT_EXPORT_METHOD(configureCallKit: (NSDictionary *)params) {
@@ -109,7 +141,7 @@ RCT_EXPORT_METHOD(configureCallKit: (NSDictionary *)params) {
     _callKitProvider = [[CXProvider alloc] initWithConfiguration:configuration];
     [_callKitProvider setDelegate:self queue:nil];
 
-    NSLog(@"CallKit Initialized");
+    NSLog(@"[RNTwilio] CallKit Initialized");
 
     self.callKitCallController = [[CXCallController alloc] init];
   }
@@ -118,25 +150,25 @@ RCT_EXPORT_METHOD(configureCallKit: (NSDictionary *)params) {
 - (void)registerWithAccessToken:(NSData * _Nullable)deviceTokenString {
   NSString *accessToken = [self fetchAccessToken];
   NSData *cachedDeviceToken = [[NSUserDefaults standardUserDefaults] objectForKey:kCachedDeviceToken];
-  if (![cachedDeviceToken isEqualToData:deviceTokenString]) {
-    if(deviceTokenString != nil) cachedDeviceToken = deviceTokenString;
+  if (accessToken != nil && deviceTokenString != nil && ![cachedDeviceToken isEqualToData:deviceTokenString]) {
+    cachedDeviceToken = deviceTokenString;
     [TwilioVoiceSDK registerWithAccessToken:accessToken
                           deviceToken:cachedDeviceToken
                               completion:^(NSError *error) {
                                   if (error) {
-                                      NSLog(@"An error occurred while registering: %@", [error localizedDescription]);
+                                      NSLog(@"[RNTwilio] An error occurred while registering: %@", [error localizedDescription]);
                                       NSMutableDictionary *params = [[NSMutableDictionary alloc] init];
                                       [params setObject:[error localizedDescription] forKey:@"err"];
-                                      [self sendEventWithName:@"deviceNotReady" body:params];
+                                      [self sendEventWithNameWrapper:@"deviceNotReady" body:params];
                                   }
                                   else {
-                                      NSLog(@"Successfully registered for VoIP push notifications.");
+                                      NSLog(@"[RNTwilio] Successfully registered for VoIP push notifications.");
                                       [[NSUserDefaults standardUserDefaults] setObject:cachedDeviceToken forKey:kCachedDeviceToken];
-                                      [self sendEventWithName:@"deviceReady" body:nil];
+                                      [self sendEventWithNameWrapper:@"deviceReady" body:nil];
                                   }
                               }];
   } else {
-    NSLog(@"RNTwilio register with access token. It doesnt have cached access token");
+    NSLog(@"[RNTwilio] register with access token. It doesnt have cached access token");
   }
 }
         
@@ -148,21 +180,22 @@ RCT_EXPORT_METHOD(configureCallKit: (NSDictionary *)params) {
                                 deviceToken:cachedDeviceToken
                                 completion:^(NSError * _Nullable error) {
                                   if (error) {
-                                      NSLog(@"An error occurred while unregistering: %@", [error localizedDescription]);
+                                      NSLog(@"[RNTwilio] An error occurred while unregistering: %@", [error localizedDescription]);
                                   } else {
-                                      NSLog(@"Successfully unregistered for VoIP push notifications.");
+                                      NSLog(@"[RNTwilio] Successfully unregistered for VoIP push notifications.");
                                   }
                               }];
   }
 }
 
 RCT_EXPORT_METHOD(connect: (NSDictionary *)params) {
-  NSLog(@"Calling phone number %@", [params valueForKey:@"To"]);
+  NSLog(@"[RNTwilio] Calling phone number %@", [params valueForKey:@"To"]);
 
   UIDevice* device = [UIDevice currentDevice];
   device.proximityMonitoringEnabled = YES;
 
   if (self.activeCall && self.activeCall.state == TVOCallStateConnected) {
+    self.rejectCallReason = @"Call already connected";
     [self performEndCallActionWithUUID:self.activeCall.uuid];
   } else {
     NSUUID *uuid = [NSUUID UUID];
@@ -173,18 +206,19 @@ RCT_EXPORT_METHOD(connect: (NSDictionary *)params) {
 }
 
 RCT_EXPORT_METHOD(disconnect) {
-    NSLog(@"Disconnecting call. UUID %@", self.activeCall.uuid.UUIDString);
+    NSLog(@"[RNTwilio] Disconnecting call. UUID %@", self.activeCall.uuid.UUIDString);
+    self.rejectCallReason = @"[JS] User disconnecting call";
     self.userInitiatedDisconnect = YES;
     [self performEndCallActionWithUUID:self.activeCall.uuid];
 }
 
 RCT_EXPORT_METHOD(setMuted: (BOOL *)muted) {
-  NSLog(@"Mute/UnMute call");
+  NSLog(@"[RNTwilio] Mute/UnMute call");
     self.activeCall.muted = muted ? YES : NO;
 }
 
 RCT_EXPORT_METHOD(setOnHold: (BOOL *)isOnHold) {
-  NSLog(@"Hold/Unhold call");
+  NSLog(@"[RNTwilio] Hold/Unhold call");
     self.activeCall.onHold = isOnHold ? YES : NO;
 }
 
@@ -194,13 +228,13 @@ RCT_EXPORT_METHOD(setSpeakerPhone: (BOOL *)speaker) {
 
 RCT_EXPORT_METHOD(sendDigits: (NSString *)digits) {
   if (self.activeCall && self.activeCall.state == TVOCallStateConnected) {
-    NSLog(@"SendDigits %@", digits);
+    NSLog(@"[RNTwilio] SendDigits %@", digits);
     [self.activeCall sendDigits:digits];
   }
 }
 
 RCT_EXPORT_METHOD(unregister) {
-  NSLog(@"unregister");
+  NSLog(@"[RNTwilio] unregister");
   [self unregisterWithAccessToken];
   [[NSUserDefaults standardUserDefaults] removeObjectForKey:kCachedDeviceToken];
 }
@@ -210,15 +244,7 @@ RCT_REMAP_METHOD(getActiveCall,
                  activeCallRejecter:(RCTPromiseRejectBlock)reject) {
     NSMutableDictionary *params = [[NSMutableDictionary alloc] init];
     if (self.activeCall) {
-        if (self.activeCall.sid) {
-            [params setObject:self.activeCall.sid forKey:@"call_sid"];
-        }
-        if (self.activeCall.to) {
-            [params setObject:self.activeCall.to forKey:@"call_to"];
-        }
-        if (self.activeCall.from) {
-            [params setObject:self.activeCall.from forKey:@"call_from"];
-        }
+        params = [self getEventParamFromCall:self.activeCall];
         if (self.activeCall.state == TVOCallStateConnected) {
             [params setObject:StateConnected forKey:@"call_state"];
         } else if (self.activeCall.state == TVOCallStateConnecting) {
@@ -237,15 +263,7 @@ RCT_REMAP_METHOD(getCallInvite,
     if (self.activeCallInvites.count) {
         // considering only the first call invite
         TVOCallInvite *callInvite = [self.activeCallInvites valueForKey:[self.activeCallInvites allKeys][self.activeCallInvites.count-1]];
-        if (callInvite.callSid) {
-            [params setObject:callInvite.callSid forKey:@"call_sid"];
-        }
-        if (callInvite.from) {
-            [params setObject:callInvite.from forKey:@"call_from"];
-        }
-        if (callInvite.to) {
-            [params setObject:callInvite.to forKey:@"call_to"];
-        }
+        params = [self getEventParamFromCallInvite:callInvite];
     }
     resolve(params);
 }
@@ -256,22 +274,36 @@ RCT_REMAP_METHOD(getCallInvite,
   self.voipRegistry.desiredPushTypes = [NSSet setWithObject:PKPushTypeVoIP];
 }
 
+- (NSMutableDictionary *) getEventParamFromCallInvite:(TVOCallInvite *)callInvite {
+    NSMutableDictionary *params = [[NSMutableDictionary alloc] init];
+    if (callInvite.callSid) [params setObject:callInvite.callSid forKey:@"call_sid"];
+    if (callInvite.from) [params setObject:callInvite.from forKey:@"call_from"];
+    if (callInvite.to) [params setObject:callInvite.to forKey:@"call_to"];
+    return params;
+}
+
+- (NSMutableDictionary *) getEventParamFromCall:(TVOCall *)call{
+    NSMutableDictionary *params = [[NSMutableDictionary alloc] init];
+    if (call.sid) [params setObject:call.sid forKey:@"call_sid"];
+    if (call.from) [params setObject:call.from forKey:@"call_from"];
+    if (call.to) [params setObject:call.to forKey:@"call_to"];
+    return params;
+}
+
 - (NSString *)fetchAccessToken {
-  if (_tokenUrl) {
-    NSString *accessToken = [NSString stringWithContentsOfURL:[NSURL URLWithString:_tokenUrl]
-                                                     encoding:NSUTF8StringEncoding
-                                                        error:nil];
-    return accessToken;
+  if (_token) {
+    NSLog(@"[RNTwilio] fetchAccessToken from variable");
+    return _token;
   } else {
-      _token = [[NSUserDefaults standardUserDefaults] objectForKey:twilioAccessToken];
-      NSLog(@"RNTwilio:fetchAccessToken from cache: %@", [[NSUserDefaults standardUserDefaults] stringForKey:twilioAccessToken]);
-      return _token;
+    _token = [[NSUserDefaults standardUserDefaults] objectForKey:twilioAccessToken];
+    NSLog(@"[RNTwilio] fetchAccessToken from cache");
+    return _token;
   }
 }
 
 #pragma mark - PKPushRegistryDelegate
 - (void)pushRegistry:(PKPushRegistry *)registry didUpdatePushCredentials:(PKPushCredentials *)credentials forType:(NSString *)type {
-  NSLog(@"pushRegistry:didUpdatePushCredentials:forType");
+  NSLog(@"[RNTwilio] pushRegistry:didUpdatePushCredentials:forType");
 
   if ([type isEqualToString:PKPushTypeVoIP]) {
     NSData *deviceTokenString = credentials.token;
@@ -280,23 +312,9 @@ RCT_REMAP_METHOD(getCallInvite,
 }
 
 - (void)pushRegistry:(PKPushRegistry *)registry didInvalidatePushTokenForType:(PKPushType)type {
-  NSLog(@"pushRegistry:didInvalidatePushTokenForType");
+  NSLog(@"[RNTwilio] pushRegistry:didInvalidatePushTokenForType");
   if ([type isEqualToString:PKPushTypeVoIP]) {
     [self unregisterWithAccessToken];
-  }
-}
-
-/**
-* Try using the `pushRegistry:didReceiveIncomingPushWithPayload:forType:withCompletionHandler:` method if
-* your application is targeting iOS 11. According to the docs, this delegate method is deprecated by Apple.
-*/
-- (void)pushRegistry:(PKPushRegistry *)registry didReceiveIncomingPushWithPayload:(PKPushPayload *)payload forType:(NSString *)type {
-  NSLog(@"pushRegistry:didReceiveIncomingPushWithPayload:forType");
-  if ([type isEqualToString:PKPushTypeVoIP]) {
-      // The Voice SDK will use main queue to invoke `cancelledCallInviteReceived:error` when delegate queue is not passed
-      if (![TwilioVoiceSDK handleNotification:payload.dictionaryPayload delegate:self delegateQueue: nil]) {
-          NSLog(@"This is not a valid Twilio Voice notification.");
-      }
   }
 }
 
@@ -308,12 +326,12 @@ RCT_REMAP_METHOD(getCallInvite,
 didReceiveIncomingPushWithPayload:(PKPushPayload *)payload
              forType:(PKPushType)type
 withCompletionHandler:(void (^)(void))completion {
-    NSLog(@"pushRegistry:didReceiveIncomingPushWithPayload:forType:withCompletionHandler");
+    NSLog(@"[RNTwilio] pushRegistry:didReceiveIncomingPushWithPayload:forType:withCompletionHandler");
 
     if ([type isEqualToString:PKPushTypeVoIP]) {
         // The Voice SDK will use main queue to invoke `cancelledCallInviteReceived:error` when delegate queue is not passed
         if (![TwilioVoiceSDK handleNotification:payload.dictionaryPayload delegate:self delegateQueue: nil]) {
-            NSLog(@"This is not a valid Twilio Voice notification.");
+            NSLog(@"[RNTwilio] This is not a valid Twilio Voice notification.");
         }
     }
     if (!completion) return;
@@ -342,7 +360,7 @@ withCompletionHandler:(void (^)(void))completion {
      * Calling `[TwilioVoice handleNotification:delegate:]` will synchronously process your notification payload and
      * provide you a `TVOCallInvite` object. Report the incoming call to CallKit upon receiving this callback.
      */
-    NSLog(@"callInviteReceived");
+    NSLog(@"[RNTwilio] callInviteReceived");
     NSString *from = @"Unknown";
     if (callInvite.from) {
         from = [callInvite.from stringByReplacingOccurrencesOfString:@"client:" withString:@""];
@@ -357,50 +375,9 @@ withCompletionHandler:(void (^)(void))completion {
         [self incomingPushHandled];
     }
 
-    NSMutableDictionary *params = [[NSMutableDictionary alloc] init];
-    if (callInvite.callSid) {
-      [params setObject:callInvite.callSid forKey:@"call_sid"];
-    }
-    if (callInvite.from) {
-      [params setObject:callInvite.from forKey:@"call_from"];
-    }
-    if (callInvite.to) {
-      [params setObject:callInvite.to forKey:@"call_to"];
-    }
-    [self sendEventWithName:@"deviceDidReceiveIncoming" body:params];
+    NSMutableDictionary *params = [self getEventParamFromCallInvite:callInvite];
+    [self sendEventWithNameWrapper:@"deviceDidReceiveIncoming" body:params];
 }
-
-- (void)cancelledCallInviteReceived:(nonnull TVOCancelledCallInvite *)cancelledCallInvite {
-    /**
-    * The SDK may call `[TVONotificationDelegate callInviteReceived:error:]` asynchronously on the dispatch queue
-    * with a `TVOCancelledCallInvite` if the caller hangs up or the client encounters any other error before the called
-    * party could answer or reject the call.
-    */
-    NSLog(@"cancelledCallInviteReceived");
-    TVOCallInvite *callInvite;
-    for (NSString *activeCallInviteId in self.activeCallInvites) {
-        TVOCallInvite *activeCallInvite = [self.activeCallInvites objectForKey:activeCallInviteId];
-        if ([cancelledCallInvite.callSid isEqualToString:activeCallInvite.callSid]) {
-            callInvite = activeCallInvite;
-            break;
-        }
-    }
-    if (callInvite) {
-        [self performEndCallActionWithUUID:callInvite.uuid];
-        NSMutableDictionary *params = [[NSMutableDictionary alloc] init];
-        if (callInvite.callSid) {
-            [params setObject:callInvite.callSid forKey:@"call_sid"];
-        }
-        if (callInvite.from) {
-            [params setObject:callInvite.from forKey:@"call_from"];
-        }
-        if (callInvite.to) {
-            [params setObject:callInvite.to forKey:@"call_to"];
-        }
-        [self sendEventWithName:@"callInviteCancelled" body:params];
-    }
-}
-
 
 - (void)cancelledCallInviteReceived:(TVOCancelledCallInvite *)cancelledCallInvite error:(NSError *)error {
     /**
@@ -408,7 +385,7 @@ withCompletionHandler:(void (^)(void))completion {
     * with a `TVOCancelledCallInvite` if the caller hangs up or the client encounters any other error before the called
     * party could answer or reject the call.
     */
-    NSLog(@"cancelledCallInviteReceived with error %@", error);
+    NSLog(@"[RNTwilio] cancelledCallInviteReceived with error %@", error);
     TVOCallInvite *callInvite;
     for (NSString *activeCallInviteId in self.activeCallInvites) {
         TVOCallInvite *activeCallInvite = [self.activeCallInvites objectForKey:activeCallInviteId];
@@ -418,28 +395,18 @@ withCompletionHandler:(void (^)(void))completion {
         }
     }
     if (callInvite) {
+        self.cancelledCallInviteReceived = YES;
         [self performEndCallActionWithUUID:callInvite.uuid];
-        NSMutableDictionary *params = [[NSMutableDictionary alloc] init];
-        if (callInvite.callSid) {
-            [params setObject:callInvite.callSid forKey:@"call_sid"];
-        }
-        if (callInvite.from) {
-            [params setObject:callInvite.from forKey:@"call_from"];
-        }
-        if (callInvite.to) {
-            [params setObject:callInvite.to forKey:@"call_to"];
-        }
-        [self sendEventWithName:@"callInviteCancelled" body:params];
     }
 }
 
 - (void)notificationError:(NSError *)error {
-  NSLog(@"notificationError: %@", [error localizedDescription]);
+  NSLog(@"[RNTwilio] notificationError: %@", [error localizedDescription]);
 }
 
 #pragma mark - TVOCallDelegate
 - (void)callDidStartRinging:(TVOCall *)call {
-    NSLog(@"callDidStartRinging");
+    NSLog(@"[RNTwilio] callDidStartRinging");
 
     /*
      When [answerOnBridge](https://www.twilio.com/docs/voice/twiml/dial#answeronbridge) is enabled in the
@@ -447,75 +414,49 @@ withCompletionHandler:(void (^)(void))completion {
      accepted on the callee's side. The application can use the `AVAudioPlayer` to play custom audio files
      between the `[TVOCallDelegate callDidStartRinging:]` and the `[TVOCallDelegate callDidConnect:]` callbacks.
      */
-    NSMutableDictionary *callParams = [[NSMutableDictionary alloc] init];
-    [callParams setObject:call.sid forKey:@"call_sid"];
-    if (call.from) {
-        [callParams setObject:call.from forKey:@"call_from"];
-    }
-    [self sendEventWithName:@"callStateRinging" body:callParams];
+    NSMutableDictionary *callParams = [self getEventParamFromCall:call];
+    [self sendEventWithNameWrapper:@"callStateRinging" body:callParams];
 }
 
 #pragma mark - TVOCallDelegate
 - (void)callDidConnect:(TVOCall *)call {
-     NSLog(@"callDidConnect");
+  NSLog(@"[RNTwilio] callDidConnect");
   self.callKitCompletionCallback(YES);
 
-  NSMutableDictionary *callParams = [[NSMutableDictionary alloc] init];
-  [callParams setObject:call.sid forKey:@"call_sid"];
+  NSMutableDictionary *callParams = [self getEventParamFromCall:call];
   if (call.state == TVOCallStateConnecting) {
     [callParams setObject:StateConnecting forKey:@"call_state"];
   } else if (call.state == TVOCallStateConnected) {
     [callParams setObject:StateConnected forKey:@"call_state"];
   }
-
-  if (call.from) {
-    [callParams setObject:call.from forKey:@"call_from"];
-  }
-  if (call.to) {
-    [callParams setObject:call.to forKey:@"call_to"];
-  }
-  [self sendEventWithName:@"connectionDidConnect" body:callParams];
+  [self sendEventWithNameWrapper:@"connectionDidConnect" body:callParams];
 }
 
 - (void)call:(TVOCall *)call isReconnectingWithError:(NSError *)error {
-    NSLog(@"Call is reconnecting");
-    NSMutableDictionary *callParams = [[NSMutableDictionary alloc] init];
-    [callParams setObject:call.sid forKey:@"call_sid"];
-    if (call.from) {
-      [callParams setObject:call.from forKey:@"call_from"];
-    }
-    if (call.to) {
-      [callParams setObject:call.to forKey:@"call_to"];
-    }
-    [self sendEventWithName:@"connectionIsReconnecting" body:callParams];
+    NSLog(@"[RNTwilio] Call is reconnecting");
+    NSMutableDictionary *callParams = [self getEventParamFromCall:call];
+    [self sendEventWithNameWrapper:@"connectionIsReconnecting" body:callParams];
 }
 
 - (void)callDidReconnect:(TVOCall *)call {
-    NSLog(@"Call reconnected");
-    NSMutableDictionary *callParams = [[NSMutableDictionary alloc] init];
-    [callParams setObject:call.sid forKey:@"call_sid"];
-    if (call.from) {
-      [callParams setObject:call.from forKey:@"call_from"];
-    }
-    if (call.to) {
-      [callParams setObject:call.to forKey:@"call_to"];
-    }
-    [self sendEventWithName:@"connectionDidReconnect" body:callParams];
+    NSLog(@"[RNTwilio] Call reconnected");
+    NSMutableDictionary *callParams = [self getEventParamFromCall:call];
+    [self sendEventWithNameWrapper:@"connectionDidReconnect" body:callParams];
 }
 
 - (void)call:(TVOCall *)call didFailToConnectWithError:(NSError *)error {
-  NSLog(@"Call failed to connect: %@", error);
-
-  self.callKitCompletionCallback(NO);
+    NSLog(@"[RNTwilio] Call failed to connect: %@", error);
+    self.callKitCompletionCallback(NO);
+    self.rejectCallReason = [NSString stringWithFormat:@"didFailToConnectWithError: %@", [error localizedDescription]];
     [self performEndCallActionWithUUID:call.uuid];
     [self callDisconnected:call error:error];
 }
 
 - (void)call:(TVOCall *)call didDisconnectWithError:(NSError *)error {
     if (error) {
-        NSLog(@"didDisconnectWithError: %@", error);
+        NSLog(@"[RNTwilio] didDisconnectWithError: %@", error);
     } else {
-        NSLog(@"didDisconnect");
+        NSLog(@"[RNTwilio] didDisconnect");
     }
 
     UIDevice* device = [UIDevice currentDevice];
@@ -532,7 +473,7 @@ withCompletionHandler:(void (^)(void))completion {
 }
 
 - (void)callDisconnected:(TVOCall *)call error:(NSError *)error {
-    NSLog(@"callDisconnect");
+    NSLog(@"[RNTwilio] callDisconnect");
     if ([call isEqual:self.activeCall]) {
         self.activeCall = nil;
     }
@@ -540,7 +481,7 @@ withCompletionHandler:(void (^)(void))completion {
 
     self.userInitiatedDisconnect = NO;
 
-    NSMutableDictionary *params = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *params = [self getEventParamFromCall:call];
     if (error) {
         NSString* errMsg = [error localizedDescription];
         if (error.localizedFailureReason) {
@@ -548,19 +489,10 @@ withCompletionHandler:(void (^)(void))completion {
         }
         [params setObject:errMsg forKey:@"err"];
     }
-    if (call.sid) {
-        [params setObject:call.sid forKey:@"call_sid"];
-    }
-    if (call.to) {
-        [params setObject:call.to forKey:@"call_to"];
-    }
-    if (call.from) {
-        [params setObject:call.from forKey:@"call_from"];
-    }
     if (call.state == TVOCallStateDisconnected) {
         [params setObject:StateDisconnected forKey:@"call_state"];
     }
-    [self sendEventWithName:@"connectionDidDisconnect" body:params];
+    [self sendEventWithNameWrapper:@"connectionDidDisconnect" body:params];
 }
 
 #pragma mark - AVAudioSession
@@ -576,43 +508,46 @@ withCompletionHandler:(void (^)(void))completion {
         NSError *error = nil;
         if (toSpeaker) {
             if (![session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error]) {
-                NSLog(@"Unable to reroute audio: %@", [error localizedDescription]);
+                NSLog(@"[RNTwilio] Unable to reroute audio: %@", [error localizedDescription]);
             }
         } else {
             if (![session overrideOutputAudioPort:AVAudioSessionPortOverrideNone error:&error]) {
-                NSLog(@"Unable to reroute audio: %@", [error localizedDescription]);
+                NSLog(@"[RNTwilio] Unable to reroute audio: %@", [error localizedDescription]);
             }
         }
     };
     self.audioDevice.block();
+    NSMutableDictionary *param = [[NSMutableDictionary alloc] init];
+    [param setObject:toSpeaker?@"to_speaker":@"to_default" forKey:@"action"];
+    [self makeupEventParamAndSetToCache:@"toggleAudioRoute" body:param];
 }
 
 #pragma mark - CXProviderDelegate
 - (void)providerDidReset:(CXProvider *)provider {
-  NSLog(@"providerDidReset");
+  NSLog(@"[RNTwilio] providerDidReset");
     self.audioDevice.enabled = YES;
 }
 
 - (void)providerDidBegin:(CXProvider *)provider {
-  NSLog(@"providerDidBegin");
+  NSLog(@"[RNTwilio] providerDidBegin");
 }
 
 - (void)provider:(CXProvider *)provider didActivateAudioSession:(AVAudioSession *)audioSession {
-  NSLog(@"provider:didActivateAudioSession");
+  NSLog(@"[RNTwilio] provider:didActivateAudioSession");
     self.audioDevice.enabled = YES;
 }
 
 - (void)provider:(CXProvider *)provider didDeactivateAudioSession:(AVAudioSession *)audioSession {
-  NSLog(@"provider:didDeactivateAudioSession");
+  NSLog(@"[RNTwilio] provider:didDeactivateAudioSession");
     self.audioDevice.enabled = NO;
 }
 
 - (void)provider:(CXProvider *)provider timedOutPerformingAction:(CXAction *)action {
-  NSLog(@"provider:timedOutPerformingAction");
+  NSLog(@"[RNTwilio] provider:timedOutPerformingAction");
 }
 
 - (void)provider:(CXProvider *)provider performStartCallAction:(CXStartCallAction *)action {
-  NSLog(@"provider:performStartCallAction");
+  NSLog(@"[RNTwilio] provider:performStartCallAction");
 
     self.audioDevice.enabled = NO;
     self.audioDevice.block();
@@ -632,7 +567,7 @@ withCompletionHandler:(void (^)(void))completion {
 }
 
 - (void)provider:(CXProvider *)provider performAnswerCallAction:(CXAnswerCallAction *)action {
-    NSLog(@"provider:performAnswerCallAction");
+    NSLog(@"[RNTwilio] provider:performAnswerCallAction");
     AVAuthorizationStatus microphonePermission = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
     if ( microphonePermission == AVAuthorizationStatusAuthorized ) {
         self.audioDevice.enabled = NO;
@@ -647,29 +582,35 @@ withCompletionHandler:(void (^)(void))completion {
 
         [action fulfill];
     } else {
-        NSLog(@"perform end cause by denied microphone permission");
+        NSLog(@"[RNTwilio] perform end cause by denied microphone permission");
+        self.rejectCallReason = @"Microphone permission is not granted";
         [self performEndCallActionWithUUID:action.callUUID ];
     }
 }
 
 - (void)provider:(CXProvider *)provider performEndCallAction:(CXEndCallAction *)action {
-  NSLog(@"provider:performEndCallAction");
+  NSLog(@"[RNTwilio] provider:performEndCallAction");
 
     TVOCallInvite *callInvite = self.activeCallInvites[action.callUUID.UUIDString];
     TVOCall *call = self.activeCalls[action.callUUID.UUIDString];
 
-    NSMutableDictionary *callParams = [[NSMutableDictionary alloc] init];
-    if (callInvite.callSid) {
-      [callParams setObject:callInvite.callSid forKey:@"call_sid"];
-    }
     if (callInvite) {
+        NSMutableDictionary *params = [self getEventParamFromCallInvite:callInvite];
         [callInvite reject];
-        [self sendEventWithName:@"callRejected" body:callParams];
+        if(self.cancelledCallInviteReceived == YES) [self sendEventWithNameWrapper:@"callInviteCancelled" body:params];
+        else {
+            if(self.rejectCallReason != nil) [params setObject:self.rejectCallReason forKey:@"rejected_reason"];
+            else [params setObject:@"User click button reject call" forKey:@"rejected_reason"];
+            [self sendEventWithNameWrapper:@"callRejected" body:params];
+        }
+        
+        self.rejectCallReason = nil;
+        self.cancelledCallInviteReceived = NO;
         [self.activeCallInvites removeObjectForKey:callInvite.uuid.UUIDString];
     } else if (call) {
         [call disconnect];
     } else {
-        NSLog(@"Unknown UUID to perform end-call action with");
+        NSLog(@"[RNTwilio] Unknown UUID to perform end-call action with");
     }
 
     self.audioDevice.enabled = YES;
@@ -677,7 +618,8 @@ withCompletionHandler:(void (^)(void))completion {
 }
 
 - (void)provider:(CXProvider *)provider performSetHeldCallAction:(CXSetHeldCallAction *)action {
-    TVOCall *call = self.activeCalls[action.callUUID.UUIDString];
+  NSLog(@"[RNTwilio] provider:performSetHeldCallAction");
+  TVOCall *call = self.activeCalls[action.callUUID.UUIDString];
   if (call) {
     [call setOnHold:action.isOnHold];
     [action fulfill];
@@ -687,6 +629,7 @@ withCompletionHandler:(void (^)(void))completion {
 }
 
 - (void)provider:(CXProvider *)provider performSetMutedCallAction:(CXSetMutedCallAction *)action {
+    NSLog(@"[RNTwilio] provider:performSetMutedCallAction");
     TVOCall *call = self.activeCalls[action.callUUID.UUIDString];
     if (call) {
         [call setMuted:action.isMuted];
@@ -697,9 +640,10 @@ withCompletionHandler:(void (^)(void))completion {
 }
 
 - (void)provider:(CXProvider *)provider performPlayDTMFCallAction:(CXPlayDTMFCallAction *)action {
+  NSLog(@"[RNTwilio] provider:performPlayDTMFCallAction");
   TVOCall *call = self.activeCalls[action.callUUID.UUIDString];
   if (call && call.state == TVOCallStateConnected) {
-    NSLog(@"SendDigits %@", action.digits);
+    NSLog(@"[RNTwilio] SendDigits %@", action.digits);
     [call sendDigits:action.digits];
   }
 }
@@ -716,9 +660,9 @@ withCompletionHandler:(void (^)(void))completion {
 
   [self.callKitCallController requestTransaction:transaction completion:^(NSError *error) {
     if (error) {
-      NSLog(@"StartCallAction transaction request failed: %@", [error localizedDescription]);
+      NSLog(@"[RNTwilio] StartCallAction transaction request failed: %@", [error localizedDescription]);
     } else {
-      NSLog(@"StartCallAction transaction request successful");
+      NSLog(@"[RNTwilio] StartCallAction transaction request successful");
 
       CXCallUpdate *callUpdate = [[CXCallUpdate alloc] init];
       callUpdate.remoteHandle = callHandle;
@@ -748,9 +692,9 @@ withCompletionHandler:(void (^)(void))completion {
 
   [self.callKitProvider reportNewIncomingCallWithUUID:uuid update:callUpdate completion:^(NSError *error) {
     if (!error) {
-      NSLog(@"Incoming call successfully reported");
+      NSLog(@"[RNTwilio] Incoming call successfully reported");
     } else {
-      NSLog(@"Failed to report incoming call successfully: %@.", [error localizedDescription]);
+      NSLog(@"[RNTwilio] Failed to report incoming call successfully: %@.", [error localizedDescription]);
     }
   }];
 }
@@ -826,10 +770,10 @@ withCompletionHandler:(void (^)(void))completion {
 }
 
 - (void)handleAppTerminateNotification {
-  NSLog(@"handleAppTerminateNotification called");
+  NSLog(@"[RNTwilio] handleAppTerminateNotification called");
 
   if (self.activeCall) {
-    NSLog(@"handleAppTerminateNotification disconnecting an active call");
+    NSLog(@"[RNTwilio] handleAppTerminateNotification disconnecting an active call");
     [self.activeCall disconnect];
   }
 }

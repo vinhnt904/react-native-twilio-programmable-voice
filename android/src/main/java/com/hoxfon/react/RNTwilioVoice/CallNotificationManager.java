@@ -111,7 +111,7 @@ public class CallNotificationManager {
                         .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                         .setSmallIcon(R.drawable.ic_call_missed_white_24dp)
                         .setContentTitle(title)
-                        .setContentText(callFrom + context.getString(R.string.call_missed_from))
+                        .setContentText(callFrom + " " + context.getString(R.string.call_missed_from))
                         .setAutoCancel(true)
                         .setShowWhen(true)
                         .setExtras(extras)

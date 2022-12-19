@@ -16,7 +16,6 @@ import com.facebook.react.bridge.WritableMap;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-import static com.hoxfon.react.RNTwilioVoice.EventManager.EVENT_PROXIMITY;
 import static com.hoxfon.react.RNTwilioVoice.TwilioVoiceModule.TAG;
 
 public class ProximityManager {
@@ -124,9 +123,6 @@ public class ProximityManager {
                     } else {
                         turnScreenOn();
                     }
-                    WritableMap data = Arguments.createMap();
-                    data.putBoolean("isNear", isNear);
-                    eventManager.sendEvent(EVENT_PROXIMITY, data);
                 }
             }
 

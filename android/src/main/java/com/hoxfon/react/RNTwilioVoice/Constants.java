@@ -36,6 +36,7 @@ public class Constants {
     public static final String ERROR = "err";
     public static final String CALL_KEY = "call";
     public static final String CALL_INVITE_KEY = "callInvite";
+    public static final String REJECTED_REASON = "rejected_reason";
     public static final String CALL_STATE_CONNECTED = Call.State.CONNECTED.toString();
     public static final String SELECTED_AUDIO_DEVICE = "selected_audio_device";
     public static final String CALLER_VERIFICATION_STATUS = "caller_verification";

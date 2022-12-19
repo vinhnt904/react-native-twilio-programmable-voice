@@ -34,7 +34,7 @@ const Twilio = {
         if (typeof token !== 'string') {
             return {
                 initialized: false,
-                err:         'Invalid token, token must be a string'
+                err: 'Invalid token, token must be a string'
             }
         };
 
@@ -76,6 +76,21 @@ const Twilio = {
             return
         }
         return TwilioVoice.setSpeakerPhone(value)
+    },
+    getCacheEvents(value) {
+        return TwilioVoice.getCacheEvents()
+    },
+    showIncomingCallActivity(value) {
+        if (Platform.OS === IOS) {
+            return
+        }
+        TwilioVoice.showIncomingCallActivity()
+    },
+    closeIncomingCallActivity(value) {
+        if (Platform.OS === IOS) {
+            return
+        }
+        return TwilioVoice.closeIncomingCallActivity()
     },
     sendDigits: TwilioVoice.sendDigits,
     hold: TwilioVoice.setOnHold,
@@ -124,10 +139,10 @@ const Twilio = {
             throw new Error('Event handler not found: ' + type)
         }
         if (_eventHandlers[type])
-        if (_eventHandlers[type].has(handler)) {
-            return
-        }
-        _eventHandlers[type].set(handler, NativeAppEventEmitter.addListener(type, rtn => { handler(rtn) }))
+            if (_eventHandlers[type].has(handler)) {
+                return
+            }
+        _eventHandlers[type].set(handler, NativeAppEventEmitter.addListener(type, rtn => {handler(rtn)}))
     },
     removeEventListener(type, handler) {
         if (!_eventHandlers[type].has(handler)) {
