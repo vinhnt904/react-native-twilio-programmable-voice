@@ -27,7 +27,6 @@ import androidx.annotation.StringRes;
 import androidx.core.app.NotificationCompat;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.ProcessLifecycleOwner;
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import com.twilio.voice.CallInvite;
 
@@ -217,7 +216,6 @@ public class IncomingCallNotificationService extends Service {
     private void handleCancelledCall(Intent intent) {
         SoundPoolManager.getInstance(this).stopRinging();
         endForeground();
-        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
     }
 
     private void handleIncomingCall(CallInvite callInvite, int notificationId) {

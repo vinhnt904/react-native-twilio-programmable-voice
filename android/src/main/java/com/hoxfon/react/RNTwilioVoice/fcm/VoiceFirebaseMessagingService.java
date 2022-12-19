@@ -130,7 +130,7 @@ public class VoiceFirebaseMessagingService extends FirebaseMessagingService {
         intent.setAction(Constants.ACTION_INCOMING_CALL);
         intent.putExtra(Constants.INCOMING_CALL_NOTIFICATION_ID, notificationId);
         intent.putExtra(Constants.INCOMING_CALL_INVITE, callInvite);
-
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
         startService(intent);
     }
 
@@ -141,6 +141,7 @@ public class VoiceFirebaseMessagingService extends FirebaseMessagingService {
         if (callException != null) {
             intent.putExtra(Constants.CANCELLED_CALL_INVITE_EXCEPTION, callException.getMessage());
         }
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
         startService(intent);
     }
 }
