@@ -54,7 +54,7 @@ android {
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation 'com.twilio:audioswitch:1.1.5'
-    implementation 'com.twilio:voice-android:6.1.1'
+    implementation 'com.twilio:voice-android:6.1.2'
     implementation 'com.facebook.react:react-native:+'
     implementation 'com.google.firebase:firebase-messaging:19.0.+'
     implementation 'androidx.lifecycle:lifecycle-extensions:2.2.0'

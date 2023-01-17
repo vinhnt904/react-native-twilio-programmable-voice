@@ -148,10 +148,17 @@ RCT_EXPORT_METHOD(configureCallKit: (NSDictionary *)params) {
 }
 
 - (void)registerWithAccessToken:(NSData * _Nullable)deviceTokenString {
-  NSString *accessToken = [self fetchAccessToken];
   NSData *cachedDeviceToken = [[NSUserDefaults standardUserDefaults] objectForKey:kCachedDeviceToken];
-  if (accessToken != nil && deviceTokenString != nil && ![cachedDeviceToken isEqualToData:deviceTokenString]) {
-    cachedDeviceToken = deviceTokenString;
+  if([cachedDeviceToken isEqualToData:deviceTokenString]) {
+      NSLog(@"[RNTwilio] register with access token. Same deviceToken");
+      return;
+  }
+  if(deviceTokenString != nil && cachedDeviceToken == nil){
+      [[NSUserDefaults standardUserDefaults] setObject:deviceTokenString forKey:kCachedDeviceToken];
+      cachedDeviceToken = deviceTokenString;
+  }
+  NSString *accessToken = [self fetchAccessToken];
+  if (accessToken != nil && cachedDeviceToken != nil) {
     [TwilioVoiceSDK registerWithAccessToken:accessToken
                           deviceToken:cachedDeviceToken
                               completion:^(NSError *error) {

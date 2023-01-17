@@ -1,5 +1,14 @@
 [Release Section](https://github.com/hoxfon/react-native-twilio-programmable-voice/releases)
 
+## 4.5.0
+
+- General
+  - Add new method `getCacheEvents` return Promise<Event[]>
+  - Improve event data
+  
+- Android
+  - Add event `callRejected`
+
 ## 4.4.0
 
 - iOS:

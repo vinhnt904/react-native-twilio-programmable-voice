@@ -2,4 +2,8 @@
 <resources>
     <color name="red">#d6312e</color>
     <color name="green">#258c42</color>
+
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowTranslucentStatus">true</item>
+    </style>
 </resources>
